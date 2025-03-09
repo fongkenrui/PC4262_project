@@ -1,0 +1,19 @@
+name: PC4262_project
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - jupyterlab
+  - nbdime
+  - numpy
+  - scipy
+  - scikit-learn
+  - pandas
+  - xarray
+  - matplotlib
+  - proplot
+  - seaborn
+  - ipykernel
+  - pip:
+      - nbstripout
+
