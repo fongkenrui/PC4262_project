@@ -172,3 +172,5 @@ cython_debug/
 
 # System files
 .DS_store
+
+datasets/
