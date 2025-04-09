@@ -1,4 +1,4 @@
-"*.ipynb merge=nbdime diff=nbdime" 
+*.ipynb merge=nbdime diff=nbdime
 
 *.ipynb filter=nbstripout
 *.zpln filter=nbstripout
