@@ -3,6 +3,7 @@ import xarray as xr
 from scipy import constants as c
 from scipy.interpolate import make_splrep
 import warnings
+from scipy.optimize import minimize
 
 # Module for the base spectral mixture model
 
@@ -24,6 +25,7 @@ class SpectralMixtureModel():
         n_bkg,
         bkg_spectra_lis, # List of spectra of len n_bkg
         # All spectra should be spectral radiances following lambd
+        SI=True, # Toggle bkg_spectra units from SI to AVIRIS standard
     ):
         # Design this class to be able to hold arbitrary number of endmembers
         # But for actual purposes, have only one to two end members
@@ -32,11 +34,18 @@ class SpectralMixtureModel():
         
         if len(bkg_spectra_lis) != n_bkg:
             raise ValueError("n_bkg must be the same as the length of bkg_spectra_lis!")
-        self.bkg_spectra_lis = bkg_spectra_lis
+
+        if SI:
+            self.bkg_spectra_lis = bkg_spectra_lis
+            bkg_spectra_lis_mod = bkg_spectra_lis
+        else:
+            print('Converting bkg_spectra to SI...')
+            bkg_spectra_lis_mod = [(wv, spectra*1e7) for (wv, spectra) in bkg_spectra_lis]
+            self.bkg_spectra_lis = bkg_spectra_lis_mod
 
         # Create spline functions for the spectra
         bkg_spectra_splines = []
-        for lambd, spectra in bkg_spectra_lis:
+        for lambd, spectra in bkg_spectra_lis_mod:
             spline = make_splrep(
                 lambd,
                 spectra,
@@ -52,13 +61,13 @@ class SpectralMixtureModel():
         for T in T_tup:
             spectra = _planck(T, lambd)
             result_list.append(spectra)
-        return np.array(result_list)
+        return result_list
     
     def get_bkg_spectra(self, lambd):
         result_list = list()
         for spline in self.bkg_spectra_splines:
             result_list.append(spline(lambd))
-        return np.array(result_list)
+        return result_list
 
     def total_radiance(self, lambd, T_tup, T_fracs, bkg_fracs):
         # noise is given as an absolute radiance value for 1 std
@@ -78,6 +87,12 @@ class SpectralMixtureModel():
         # Multiply by 1e6 / (1e9 * 1e4) -> divide by 1e7
         return result*1e-7
 
+def _planck(T, lambd):
+    # Convert lambd from nanometres to metres
+    lambd_ = lambd * 1e-9
+    top = 2 * c.h * c.c**2
+    bottom = lambd_**5 * (np.exp((c.h * c.c)/(lambd_ * c.k * T)) - 1)
+    return top/bottom
 def _planck(T, lambd):
     # Convert lambd from nanometres to metres
     lambd_ = lambd * 1e-9
@@ -129,3 +144,16 @@ def retrieve_params(result, model):
     print("The fire fractions are: ", T_frac)
     print("The background fractions are: ", bkg_fracs)
     return T_tup, T_frac, bkg_fracs
+
+
+# Simple wrapper function for the parameter estimation
+def estimate_params(model, lambd, target, x0, bounds=None, ):
+    loss_func = return_loss(model, lambd, target)
+    result = minimize(
+        fun = loss_func,
+        x0 = np.array([500, 1000, 0.3, 0.3]),
+        bounds = [(0,None)]*2 + [(0, 1)]*2, # Bounds from land fractions
+        method = 'L-BFGS-B'
+    )
+    T_tup, T_frac, bkg_fracs = retrieve_params(result, model)
+    return result, [T_tup, T_frac, bkg_fracs]
