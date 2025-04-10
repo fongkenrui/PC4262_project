@@ -103,10 +103,10 @@ def _planck(T, lambd):
 
 ### Function definitions for the parameter estimation ###
 
-def return_loss(model, lambd, target):
+def return_loss_unconstrained(model, lambd, target):
     n_fire = model.n_fire
     n_bkg = model.n_bkg
-
+    # Designed for BFGS/unconstrained methods
     # The parameter vector is an ndarray of shape (2*n_fire + n_bkg-1,)
     # Arguments are organized in the following order
     # [T_i, p_i_fire, p*_j_bkg]
@@ -129,8 +129,25 @@ def return_loss(model, lambd, target):
 
     return loss
 
+def return_loss_constrained(model, lambd, target):
+    n_fire = model.n_fire
+    n_bkg = model.n_bkg
+    # Designed for Methods that accept separate constraints
+    # The parameter vector is an ndarray of shape (2*n_fire + n_bkg,)
+
+    def loss(params):
+        # Unpact the parameters and normalize them appropriately
+        T_tup = tuple(params[:n_fire]*1000) # 1000 K scale
+        T_fracs = tuple(params[n_fire:2*n_fire])
+        bkg_fracs = tuple(params[2*n_fire:])
+        prediction = model.total_radiance(lambd, T_tup, T_fracs, bkg_fracs)
+        diff = target - prediction
+        return np.sum(diff**2) # L2 norm
+
+    return loss
+
 # Retrieve the parameters from the result
-def retrieve_params(result, model):
+def retrieve_params_unconstrained(result, model):
     n_fire = model.n_fire
     n_bkg = model.n_bkg
     params = result.x
@@ -145,15 +162,57 @@ def retrieve_params(result, model):
     print("The background fractions are: ", bkg_fracs)
     return T_tup, T_frac, bkg_fracs
 
+def retrieve_params_constrained(result, model):
+    n_fire = model.n_fire
+    n_bkg = model.n_bkg
+    params = result.x
+    T_tup = params[:n_fire] * 1000
+    T_frac = params[n_fire:2*n_fire]
+    bkg_fracs = params[2*n_fire:]
+    print("The fire temperatures in K are: ", T_tup)
+    print("The fire fractions are: ", T_frac)
+    print("The background fractions are: ", bkg_fracs)
+    return T_tup, T_frac, bkg_fracs
+
 
 # Simple wrapper function for the parameter estimation
-def estimate_params(model, lambd, target, x0, bounds=None, ):
-    loss_func = return_loss(model, lambd, target)
+def estimate_params_unconstrained(model, lambd, target, x0, method='L-BFGS-B'):
+    loss_func = return_loss_unconstrained(model, lambd, target)
+    n_fire = model.n_fire
+    n_bkg = model.n_bkg
+    bounds = [(0, None)] * n_fire + [(0, 1)] * (n_bkg + n_fire - 1)
+    # Check length of x0
+    if len(x0) != (2*n_fire + n_bkg - 1):
+        raise ValueError("Length of x0 needs to be (2*n_fire + n_bkg - 1)!")
+        
     result = minimize(
         fun = loss_func,
-        x0 = np.array([500, 1000, 0.3, 0.3]),
-        bounds = [(0,None)]*2 + [(0, 1)]*2, # Bounds from land fractions
-        method = 'L-BFGS-B'
+        x0 = x0,
+        bounds = bounds, # Bounds from land fractions
+        method = method
     )
-    T_tup, T_frac, bkg_fracs = retrieve_params(result, model)
+    T_tup, T_frac, bkg_fracs = retrieve_params_unconstrained(result, model)
+    return result, [T_tup, T_frac, bkg_fracs]
+
+# Simple wrapper function for the parameter estimation
+def estimate_params_constrained(model, lambd, target, x0, method='SLSQP'):
+    loss_func = return_loss_constrained(model, lambd, target)
+    n_fire = model.n_fire
+    n_bkg = model.n_bkg
+    bounds = [(0, None)] * n_fire + [(0, 1)] * (n_bkg + n_fire)
+    # Check length of x0
+    if len(x0) != (2*n_fire + n_bkg):
+        raise ValueError("Length of x0 needs to be (2*n_fire + n_bkg)!")
+        
+    result = minimize(
+        fun = loss_func,
+        x0 = x0,
+        bounds = bounds, # Bounds from land fractions
+        method = method,
+        constraints = [{
+            'type' : 'eq',
+            'fun': lambda x: np.sum(x[n_fire:]) - 1,
+        }],
+    )
+    T_tup, T_frac, bkg_fracs = retrieve_params_constrained(result, model)
     return result, [T_tup, T_frac, bkg_fracs]
